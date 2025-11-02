@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>OBS Meteor Shower — Exact Stop</title>
+<title>OBS Meteor Shower — Dim Start + Exact Stop</title>
 <style>
   html,body{margin:0;height:100%;background:transparent;overflow:hidden}
   canvas{display:block;width:100vw;height:100vh;background:transparent}
@@ -29,27 +29,28 @@ let running=false,raf=null,spawnTimer=null,megaTimer=null;
 const meteors=[],flashes=[],shockwaves=[];
 let shake=0;
 
-// Tunables
+// tunables
 const r=(a,b)=>Math.random()*(b-a)+a, ri=(a,b)=>Math.floor(r(a,b));
-const MEGA_DELAY_MS=5000;             // when to trigger final blast
-const MEGA_FLASH_LIFE_MS=1400;        // main flash length
-const MEGA_LAYER_COUNT=5;             // number of light-bloom waves
-const MEGA_LAYER_OFFSET_MS=60;        // stagger between waves
+const MEGA_DELAY_MS=5000;
+const MEGA_FLASH_LIFE_MS=1400;
+const MEGA_LAYER_COUNT=5;
+const MEGA_LAYER_OFFSET_MS=60;
+let megaEndAt=null;
 
-// We'll stop exactly at this timestamp
-let megaEndAt = null;
+// dim overlay
+let dimAlpha=0, dimActive=false, dimStart=0, DIM_FADE_MS=700;
 
 function resize(){
   dpr=Math.max(1,Math.min(2,devicePixelRatio||1));
-  W=Math.floor(innerWidth*dpr); H=Math.floor(innerHeight*dpr);
-  canvas.width=W; canvas.height=H; groundY=H-90*dpr;
+  W=Math.floor(innerWidth*dpr);H=Math.floor(innerHeight*dpr);
+  canvas.width=W;canvas.height=H;groundY=H-90*dpr;
   ctx.clearRect(0,0,W,H);
 }
 
-// -------- Meteors --------
+// ---------- meteors ----------
 function spawnMeteor(){
-  const sx=r(-0.05*W,0.8*W), sy=r(-0.1*H,0.2*H), ang=r(0.24*Math.PI,0.34*Math.PI);
-  const speed=r(7,10)*dpr, len=r(200,340)*dpr, thick=r(2,7)*dpr;
+  const sx=r(-0.05*W,0.8*W),sy=r(-0.1*H,0.2*H),ang=r(0.24*Math.PI,0.34*Math.PI);
+  const speed=r(7,10)*dpr,len=r(200,340)*dpr,thick=r(2,7)*dpr;
   meteors.push({x:sx,y:sy,vx:Math.cos(ang)*speed,vy:Math.sin(ang)*speed,len,thick,hue:ri(22,48)});
 }
 function explode(x,y,h){
@@ -57,138 +58,128 @@ function explode(x,y,h){
   shake=Math.min(28*dpr,shake+10*dpr);
 }
 function drawMeteor(m,now,dt){
-  m.x+=m.vx*(dt*1000/16); m.y+=m.vy*(dt*1000/16);
-  const sp=Math.hypot(m.vx,m.vy), tx=m.x-(m.vx*m.len)/sp, ty=m.y-(m.vy*m.len)/sp;
-  ctx.save(); ctx.globalCompositeOperation='lighter';
+  m.x+=m.vx*(dt*1000/16);m.y+=m.vy*(dt*1000/16);
+  const sp=Math.hypot(m.vx,m.vy),tx=m.x-(m.vx*m.len)/sp,ty=m.y-(m.vy*m.len)/sp;
+  ctx.save();ctx.globalCompositeOperation='lighter';
   const g=ctx.createLinearGradient(tx,ty,m.x,m.y);
-  g.addColorStop(0,`hsla(${m.hue-8},100%,48%,0)`); g.addColorStop(1,`hsla(${m.hue+18},100%,70%,1)`);
-  ctx.strokeStyle=g; ctx.lineWidth=m.thick; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(m.x,m.y); ctx.stroke();
-  ctx.beginPath(); ctx.arc(m.x,m.y,m.thick*2.5,0,Math.PI*2);
-  ctx.fillStyle=`hsla(${m.hue+16},100%,66%,0.9)`; ctx.fill();
-  ctx.restore();
-  if(m.y>=groundY){ explode(m.x,groundY,m.hue); meteors.splice(meteors.indexOf(m),1); }
+  g.addColorStop(0,`hsla(${m.hue-8},100%,48%,0)`);g.addColorStop(1,`hsla(${m.hue+18},100%,70%,1)`);
+  ctx.strokeStyle=g;ctx.lineWidth=m.thick;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(tx,ty);ctx.lineTo(m.x,m.y);ctx.stroke();
+  ctx.beginPath();ctx.arc(m.x,m.y,m.thick*2.5,0,Math.PI*2);
+  ctx.fillStyle=`hsla(${m.hue+16},100%,66%,0.9)`;ctx.fill();ctx.restore();
+  if(m.y>=groundY){explode(m.x,groundY,m.hue);meteors.splice(meteors.indexOf(m),1);}
 }
 
-// -------- Light-only flashes --------
+// ---------- flashes ----------
 function drawFlashes(now){
-  ctx.save(); ctx.globalCompositeOperation='screen';
+  ctx.save();ctx.globalCompositeOperation='screen';
   for(let i=flashes.length-1;i>=0;i--){
-    const f=flashes[i], t=(now-f.start)/f.life;
-    if(t>=1){ flashes.splice(i,1); continue; }
+    const f=flashes[i],t=(now-f.start)/f.life;
+    if(t>=1){flashes.splice(i,1);continue;}
     const a=(1-t)*0.85;
     const g=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,Math.max(W,H)*0.8);
     g.addColorStop(0,`rgba(255,240,210,${a})`);
     g.addColorStop(0.35,`rgba(255,190,100,${a*0.8})`);
     g.addColorStop(0.7,`rgba(255,120,50,${a*0.4})`);
     g.addColorStop(1,'rgba(255,60,0,0)');
-    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
   }
   ctx.restore();
 }
 
-// -------- Shockwave light blooms (no outlines) --------
+// ---------- shockwaves ----------
 function drawShockwaves(now){
-  ctx.save(); ctx.globalCompositeOperation='screen';
+  ctx.save();ctx.globalCompositeOperation='screen';
   for(let i=shockwaves.length-1;i>=0;i--){
-    const s=shockwaves[i]; const t=(now-s.start)/s.life;
-    if(t>=1){ shockwaves.splice(i,1); continue; }
-    s.r += s.sp*dpr*16;
-    const alpha = 1-t;
+    const s=shockwaves[i];const t=(now-s.start)/s.life;
+    if(t>=1){shockwaves.splice(i,1);continue;}
+    s.r+=s.sp*dpr*16;
+    const alpha=1-t;
     const g=ctx.createRadialGradient(s.x,s.y,s.r*0.35,s.x,s.y,s.r);
     g.addColorStop(0,`rgba(255,220,160,${alpha*0.16})`);
     g.addColorStop(0.6,`rgba(255,140,40,${alpha*0.16})`);
     g.addColorStop(1,'rgba(255,60,0,0)');
-    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();
   }
   ctx.restore();
 }
 
-// -------- Mega blast with exact end control --------
+// ---------- mega blast ----------
 function megaBlast(){
-  if(!running) return;
-
-  // Stop spawning immediately
-  if (spawnTimer) { clearTimeout(spawnTimer); spawnTimer=null; }
-
-  const start = performance.now();
-  const x=W/2, y=groundY-10*dpr;
-
-  // Compute the absolute end timestamp of the last visual
-  megaEndAt = start + (MEGA_LAYER_COUNT-1)*MEGA_LAYER_OFFSET_MS + MEGA_FLASH_LIFE_MS;
-
-  // Main flash ends exactly at megaEndAt
-  flashes.push({x,y,start,life: megaEndAt - start});
-
-  // Layered blooms; each life is clamped so they die at megaEndAt
+  if(!running)return;
+  if(spawnTimer){clearTimeout(spawnTimer);spawnTimer=null;}
+  const start=performance.now();
+  const x=W/2,y=groundY-10*dpr;
+  megaEndAt=start+(MEGA_LAYER_COUNT-1)*MEGA_LAYER_OFFSET_MS+MEGA_FLASH_LIFE_MS;
+  flashes.push({x,y,start,life:megaEndAt-start});
   for(let i=0;i<MEGA_LAYER_COUNT;i++){
-    const s = start + i*MEGA_LAYER_OFFSET_MS;
-    shockwaves.push({
-      x,y,r:0, sp:r(1.7,3.2),
-      start: s,
-      life: Math.max(0, megaEndAt - s) // clamp to common end
-    });
+    const s=start+i*MEGA_LAYER_OFFSET_MS;
+    shockwaves.push({x,y,r:0,sp:r(1.7,3.2),start:s,life:Math.max(0,megaEndAt-s)});
   }
-
-  shake = 80*dpr;
-  meteors.length = 0; // clear active meteors right away
+  shake=80*dpr;
+  meteors.length=0;
 }
 
-// -------- Loop --------
+// ---------- loop ----------
 function spawnLoop(){
-  if(!running) return;
-  for(let i=0;i<ri(1,3);i++) spawnMeteor();
-  spawnTimer = setTimeout(spawnLoop, ri(400,800));
+  if(!running)return;
+  for(let i=0;i<ri(1,3);i++)spawnMeteor();
+  spawnTimer=setTimeout(spawnLoop,ri(400,800));
 }
 function start(){
-  if(running) return;
-  running = true; shake = 0; megaEndAt = null;
+  if(running)return;
+  running=true;shake=0;megaEndAt=null;
+  // trigger dim fade
+  dimActive=true;dimStart=performance.now();dimAlpha=0;
   spawnLoop();
-  megaTimer = setTimeout(megaBlast, MEGA_DELAY_MS);
-  raf = requestAnimationFrame(loop);
+  megaTimer=setTimeout(megaBlast,MEGA_DELAY_MS);
+  raf=requestAnimationFrame(loop);
 }
 function hardStop(){
-  running = false;
-  if(raf) cancelAnimationFrame(raf), raf=null;
-  if(spawnTimer) clearTimeout(spawnTimer), spawnTimer=null;
-  if(megaTimer) clearTimeout(megaTimer), megaTimer=null;
+  running=false;
+  if(raf)cancelAnimationFrame(raf),raf=null;
+  if(spawnTimer)clearTimeout(spawnTimer),spawnTimer=null;
+  if(megaTimer)clearTimeout(megaTimer),megaTimer=null;
   meteors.length=flashes.length=shockwaves.length=0;
   ctx.clearRect(0,0,W,H);
+  dimAlpha=0;dimActive=false;
 }
-function stop(){ hardStop(); } // keep Stop button working
+function stop(){hardStop();}
 
 function loop(now){
-  if(!running) return;
-
-  // If we're past the exact end, cut immediately
-  if (megaEndAt && now >= megaEndAt) { hardStop(); return; }
-
-  if(!loop.last) loop.last = now;
-  const dt = Math.min(33, now - loop.last) / 1000;
-  loop.last = now;
-
+  if(!running)return;
+  if(megaEndAt && now>=megaEndAt){hardStop();return;}
+  if(!loop.last)loop.last=now;
+  const dt=Math.min(33,now-loop.last)/1000;loop.last=now;
   ctx.clearRect(0,0,W,H);
 
+  // dim overlay fade-in
+  if(dimActive){
+    const t=(now-dimStart)/DIM_FADE_MS;
+    dimAlpha=Math.min(0.6,t*0.6);
+    if(t>=1)dimActive=false;
+  }
+  if(dimAlpha>0){
+    ctx.fillStyle=`rgba(0,0,0,${dimAlpha})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
   ctx.save();
-  const sx=(Math.random()*2-1)*shake, sy=(Math.random()*2-1)*shake;
+  const sx=(Math.random()*2-1)*shake,sy=(Math.random()*2-1)*shake;
   ctx.translate(sx,sy);
-  // stronger decay so shake ends with flash
-  shake *= 0.88;
+  shake*=0.88;
 
-  for(let i=meteors.length-1;i>=0;i--) drawMeteor(meteors[i], now, dt);
+  for(let i=meteors.length-1;i>=0;i--)drawMeteor(meteors[i],now,dt);
   ctx.restore();
-
   drawFlashes(now);
   drawShockwaves(now);
-
-  raf = requestAnimationFrame(loop);
+  raf=requestAnimationFrame(loop);
 }
 
-// -------- Wire-up --------
-window.addEventListener('resize', resize);
+window.addEventListener('resize',resize);
 resize();
-document.getElementById('startBtn').onclick = start;
-document.getElementById('stopBtn').onclick  = stop;
+document.getElementById('startBtn').onclick=start;
+document.getElementById('stopBtn').onclick=stop;
 })();
 </script>
 </body>
